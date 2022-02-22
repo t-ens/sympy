@@ -1,9 +1,12 @@
 from sympy.core.backend import (S, sympify, expand, sqrt, Add, zeros, acos,
-    ImmutableMatrix as Matrix, _simplify_matrix)
-from sympy import trigsimp
+                                ImmutableMatrix as Matrix, _simplify_matrix)
+from sympy.simplify.trigsimp import trigsimp
 from sympy.printing.defaults import Printable
 from sympy.utilities.misc import filldedent
-from sympy.core.evalf import EvalfMixin, prec_to_dps
+from sympy.core.evalf import EvalfMixin
+
+from mpmath.libmp.libmpf import prec_to_dps
+
 
 __all__ = ['Vector']
 
@@ -26,7 +29,7 @@ class Vector(Printable, EvalfMixin):
     is_number = False
 
     def __init__(self, inlist):
-        """This is the constructor for the Vector class.  You shouldn't be
+        """This is the constructor for the Vector class.  You should not be
         calling this, it should only be used by other functions. You should be
         treating Vectors like you would with if you were doing the math by
         hand, and getting the first 3 from the standard basis vectors from a
@@ -400,16 +403,17 @@ class Vector(Printable, EvalfMixin):
         Examples
         ========
 
-        >>> from sympy.physics.vector import ReferenceFrame
         >>> from sympy import symbols
+        >>> from sympy.physics.vector import ReferenceFrame, cross
         >>> q1 = symbols('q1')
         >>> N = ReferenceFrame('N')
-        >>> N.x ^ N.y
+        >>> cross(N.x, N.y)
         N.z
-        >>> A = N.orientnew('A', 'Axis', [q1, N.x])
-        >>> A.x ^ N.y
+        >>> A = ReferenceFrame('A')
+        >>> A.orient_axis(N, q1, N.x)
+        >>> cross(A.x, N.y)
         N.z
-        >>> N.y ^ A.x
+        >>> cross(N.y, A.x)
         - sin(q1)*A.y - cos(q1)*A.z
 
         """
@@ -424,8 +428,8 @@ class Vector(Printable, EvalfMixin):
         def _det(mat):
             """This is needed as a little method for to find the determinant
             of a list in python; needs to work for a 3x3 list.
-            SymPy's Matrix won't take in Vector, so need a custom function.
-            You shouldn't be calling this.
+            SymPy's Matrix will not take in Vector, so need a custom function.
+            You should not be calling this.
 
             """
 
@@ -519,6 +523,8 @@ class Vector(Printable, EvalfMixin):
         >>> N = ReferenceFrame('N')
         >>> A = N.orientnew('A', 'Axis', [q1, N.y])
         >>> A.x.diff(t, N)
+        - sin(q1)*q1'*N.x - cos(q1)*q1'*N.z
+        >>> A.x.diff(t, N).express(A)
         - q1'*A.z
         >>> B = ReferenceFrame('B')
         >>> u1, u2 = dynamicsymbols('u1, u2')
@@ -550,7 +556,7 @@ class Vector(Printable, EvalfMixin):
                 else:  # else express in the frame
                     reexp_vec_comp = Vector([vector_component]).express(frame)
                     deriv = reexp_vec_comp.args[0][0].diff(var)
-                    inlist += Vector([(deriv, frame)]).express(component_frame).args
+                    inlist += Vector([(deriv, frame)]).args
 
         return Vector(inlist)
 
@@ -745,27 +751,55 @@ class Vector(Printable, EvalfMixin):
         return angle
 
     def free_symbols(self, reference_frame):
-        """
-        Returns the free symbols in the measure numbers of the vector
+        """Returns the free symbols in the measure numbers of the vector
         expressed in the given reference frame.
 
-        Parameter
-        =========
-
+        Parameters
+        ==========
         reference_frame : ReferenceFrame
-            The frame with respect to which the free symbols of the
-            given vector is to be determined.
+            The frame with respect to which the free symbols of the given
+            vector is to be determined.
+
+        Returns
+        =======
+        set of Symbol
+            set of symbols present in the measure numbers of
+            ``reference_frame``.
 
         """
 
         return self.to_matrix(reference_frame).free_symbols
 
+    def free_dynamicsymbols(self, reference_frame):
+        """Returns the free dynamic symbols (functions of time ``t``) in the
+        measure numbers of the vector expressed in the given reference frame.
+
+        Parameters
+        ==========
+        reference_frame : ReferenceFrame
+            The frame with respect to which the free dynamic symbols of the
+            given vector is to be determined.
+
+        Returns
+        =======
+        set
+            Set of functions of time ``t``, e.g.
+            ``Function('f')(me.dynamicsymbols._t)``.
+
+        """
+        # TODO : Circular dependency if imported at top. Should move
+        # find_dynamicsymbols into physics.vector.functions.
+        from sympy.physics.mechanics.functions import find_dynamicsymbols
+
+        return find_dynamicsymbols(self, reference_frame=reference_frame)
+
     def _eval_evalf(self, prec):
         if not self.args:
             return self
         new_args = []
+        dps = prec_to_dps(prec)
         for mat, frame in self.args:
-            new_args.append([mat.evalf(n=prec_to_dps(prec)), frame])
+            new_args.append([mat.evalf(n=dps), frame])
         return Vector(new_args)
 
     def xreplace(self, rule):
